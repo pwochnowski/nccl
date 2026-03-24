@@ -2,3 +2,5 @@
 /build
 *.gcov
 /coverage/
+.vscode/settings.json
+docs/**/*.o
