@@ -5,7 +5,6 @@
  * See LICENSE.txt for more license information
  *************************************************************************/
 
-#include "core.h"
 #include "graph.h"
 #include "topo.h"
 #include "comm.h"

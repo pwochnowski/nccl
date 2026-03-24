@@ -9,7 +9,6 @@
 #define NCCL_PROXY_H_
 
 #include "device.h"
-#include "info.h"
 #include "socket.h"
 #include "ipcsocket.h"
 #include "nccl_net.h"

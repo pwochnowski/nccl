@@ -20,7 +20,6 @@
 #include "argcheck.h"
 #include "tuner.h"
 #include "ras.h"
-#include "compiler.h"
 #include "profiler.h"
 #include "mnnvl.h"
 #include <sys/stat.h>

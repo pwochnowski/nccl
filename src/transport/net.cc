@@ -11,12 +11,10 @@
 #include "proxy.h"
 #include "collectives.h"
 #include "gdrwrap.h"
-#include "shmutils.h"
 #include "p2p.h"
 #include "profiler.h"
 #include "transport.h"
 #include "shm.h"
-#include "compiler.h"
 #include <assert.h>
 #include "register_inline.h"
 
