@@ -132,11 +132,10 @@ void *ringPattern(int my_rank, int total_ranks, int local_device,
     printf("Ring communication completed successfully\n");
   }
 
-  if (my_rank == 0) {
-    // ncclCommSuspend(comm, NCCL_SUSPEND_MEM);
-    // printf("  Rank %d communicator suspended for memory operations\n", my_rank);
-    // ncclCommResume(comm);
-  }
+  // if (my_rank == 0) {
+  // ncclCommSuspend(comm, NCCL_SUSPEND_MEM);
+  // ncclCommResume(comm);
+  // }
   // ========================================================================
   // STEP 5: Verify Data Correctness
   // ========================================================================
