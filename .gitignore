@@ -4,7 +4,7 @@
 /coverage/
 .vscode/settings.json
 docs/**/*.o
-
+.idea
 .cache
 docs/examples/01_communicators/02_one_device_per_pthread/one_device_per_pthread
 docs/examples/01_communicators/01_multiple_devices_single_process/multiple_devices_single_process
