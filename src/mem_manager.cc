@@ -10,7 +10,9 @@
 #include "checks.h"
 #include "argcheck.h"
 #include "cudawrap.h"
+#define ENABLE_TRACE
 #include "debug.h"
+#undef ENABLE_TRACE
 #include "bootstrap.h"
 #include "proxy.h"
 #include "transport.h"
@@ -22,6 +24,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <mutex>
+
 
 // Internal parameter to disable memory manager for testing
 NCCL_PARAM(MemManagerDisable, "DISABLE_MEM_MANAGER", 0);
@@ -958,6 +961,10 @@ ncclResult_t ncclCommSuspend(ncclComm_t comm, int flags) {
 
   NCCLCHECK(CommCheck(comm, "ncclCommSuspend", "comm"));
   NCCLCHECK(ncclCommEnsureReady(comm));
+
+  // int i = 0;
+  // while (!i)
+    // sleep(5);
 
   if (flags & NCCL_SUSPEND_MEM) {
     if (ncclParamMemManagerDisable())
