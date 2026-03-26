@@ -1,0 +1,31 @@
+<system version="1">
+  <cpu host_hash="0x61c5d2173d1b89ea" numaid="0" affinity="00000000,ffffffff,00000000,ffffffff" arch="x86_64" vendor="GenuineIntel" familyid="6" modelid="207">
+    <pci busid="0000:03:00.0" class="0x020000" vendor="0x8086" device="0x15ff" subsystem_vendor="0x15d9" subsystem_device="0x1c76" link_speed="8.0 GT/s PCIe" link_width="4">
+      <nic>
+        <net name="enp3s0f0np0" dev="0" latency="0" speed="1000" port="0" guid="0x0" maxconn="65536" gdr="0"/>
+      </nic>
+    </pci>
+    <pci busid="0000:38:00.0" class="0x060400" vendor="0x1000" device="0xc030" subsystem_vendor="0x15d9" subsystem_device="0x1d24" link_speed="32.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:3a:00.0" class="0x030200" vendor="0x10de" device="0x20b0" subsystem_vendor="0x10de" subsystem_device="0x134f" link_speed="16.0 GT/s PCIe" link_width="16">
+        <gpu dev="0" sm="80" rank="0" gdr="1">
+          <nvlink target="0000:3b:00.0" count="12" tclass="0x030200"/>
+        </gpu>
+      </pci>
+      <pci busid="0000:3b:00.0" class="0x030200" vendor="0x10de" device="0x20b0" subsystem_vendor="0x10de" subsystem_device="0x134f" link_speed="16.0 GT/s PCIe" link_width="16">
+        <gpu dev="1" sm="80" rank="1" gdr="1">
+          <nvlink target="0000:3a:00.0" count="12" tclass="0x030200"/>
+        </gpu>
+      </pci>
+    </pci>
+  </cpu>
+  <cpu host_hash="0x61c5d2173d1b89ea" numaid="1" affinity="ffffffff,00000000,ffffffff,00000000" arch="x86_64" vendor="GenuineIntel" familyid="6" modelid="207">
+    <pci busid="0000:b8:00.0" class="0x060400" vendor="0x1000" device="0xc030" subsystem_vendor="0x15d9" subsystem_device="0x1d24" link_speed="32.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:bd:00.0" class="0x030200" vendor="0x10de" device="0x20b0" subsystem_vendor="0x10de" subsystem_device="0x134f" link_speed="16.0 GT/s PCIe" link_width="16">
+        <gpu dev="2" sm="80" rank="2" gdr="1"/>
+      </pci>
+      <pci busid="0000:be:00.0" class="0x030200" vendor="0x10de" device="0x20f1" subsystem_vendor="0x10de" subsystem_device="0x145f" link_speed="16.0 GT/s PCIe" link_width="16">
+        <gpu dev="3" sm="80" rank="3" gdr="1"/>
+      </pci>
+    </pci>
+  </cpu>
+</system>

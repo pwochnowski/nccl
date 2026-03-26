@@ -5,7 +5,6 @@
  * See LICENSE.txt for more license information
  *************************************************************************/
 
-#include "cuda_runtime.h"
 #include "nccl.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -168,7 +167,6 @@ int main(int argc, char *argv[]) {
   // participants)
   NCCLCHECK(ncclCommInitAll(comms, num_gpus, devices));
   printf("All %d NCCL communicators initialized successfully\n\n", num_gpus);
-
   // =========================================================================
   // STEP 3: Create CUDA Streams and Verify Communicator Properties
   // =========================================================================

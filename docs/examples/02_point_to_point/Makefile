@@ -6,7 +6,7 @@
 #
 
 # NCCL Fundamental Examples
-EXAMPLES = 01_ring_pattern
+EXAMPLES = 01_ring_pattern 02_ring_pattern_multiple_process
 
 # Default target
 all: $(EXAMPLES)
@@ -40,9 +40,11 @@ help:
 	@echo "  help    - Show this help"
 	@echo ""
 	@echo "Examples:"
-	@echo "  01_ring_pattern - Use send and receive operations to form a ring pattern"
+	@echo "  01_ring_pattern                    - Ring pattern, single process multi-GPU"
+	@echo "  02_ring_pattern_multiple_process   - Ring pattern, one device per process/thread"
 	@echo ""
 	@echo "To build/run individual examples:"
 	@echo "  make -C 01_ring_pattern"
+	@echo "  make -C 02_ring_pattern_multiple_process"
 
 .PHONY: all clean test $(EXAMPLES)
