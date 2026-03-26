@@ -107,9 +107,16 @@ endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
+# Export compile_commands.json for IDE support
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # CUDA architecture flags
+# Default to sm_80 (A100). Override with -DCMAKE_CUDA_ARCHITECTURES="90" etc.
+# Use -DCMAKE_CUDA_ARCHITECTURES=all for a full multi-arch build.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
-    message(STATUS "CMAKE_CUDA_ARCHITECTURES not defined or empty, setting default values based on CUDA version")
+    set(CMAKE_CUDA_ARCHITECTURES "80")
+elseif(CMAKE_CUDA_ARCHITECTURES STREQUAL "all")
+    message(STATUS "CMAKE_CUDA_ARCHITECTURES=all, setting all architectures based on CUDA version")
 
     if(${CUDA_MAJOR} LESS 9)
         set(CMAKE_CUDA_ARCHITECTURES "35;50;60;61")
