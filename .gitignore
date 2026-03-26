@@ -4,3 +4,12 @@
 /coverage/
 .vscode/settings.json
 docs/**/*.o
+
+.cache
+docs/examples/01_communicators/02_one_device_per_pthread/one_device_per_pthread
+docs/examples/01_communicators/01_multiple_devices_single_process/multiple_devices_single_process
+docs/examples/02_point_to_point/01_ring_pattern/ring_pattern
+docs/examples/02_point_to_point/02_ring_pattern_multiple_process/ring_pattern_mp
+docs/examples/03_collectives/01_allreduce/allreduce
+docs/examples/04_user_buffer_registration/01_allreduce/allreduce_ub
+docs/examples/05_symmetric_memory/01_allreduce/allreduce_sm
