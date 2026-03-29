@@ -667,7 +667,7 @@ static ncclResult_t sharedNetBuffersInit(struct ncclProxyState* proxyState, int 
                                                 tpRemoteRank,
                                                  sameProcess ? proxyState->memManager : nullptr,
                                                  // when sameProcess is true, the buffer can be tracked by the proxyState manager and so can be offloaded.
-                                                 ncclMemPersist
+                                                 sameProcess ? ncclMemOffload : ncclMemPersist
       )
       );
     } else {
@@ -825,6 +825,30 @@ static ncclResult_t ncclNetGetDeviceHandle(ncclNetDeviceType type, int version, 
   return ncclSuccess;
 }
 
+struct regMrBuf_args {
+  ncclNet_t *ncclNet;
+  void *net_comm;
+  char *data_buf;
+  size_t buf_size;
+  void **mhandles;
+  ncclTopoGdrMode useGdr;
+};
+
+struct regMrBuf_args* build_args(ncclNet_t *ncclNet, void* net_comm, char* data_buf, size_t buf_size, void **mhandles, ncclTopoGdrMode useGdr) {
+  struct regMrBuf_args *args;
+  ncclCalloc(&args, 1);
+  args->ncclNet = ncclNet;
+  args->net_comm = net_comm;
+  args->data_buf = data_buf;
+  args->buf_size = buf_size;
+  args->mhandles = mhandles;
+  args->useGdr = useGdr;
+  return args;
+}
+
+static ncclResult_t regMrBuf(void *args);
+static ncclResult_t deregMrBuf(void *args);
+
 static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   struct sendNetResources* resources = (struct sendNetResources*)(connection->transportResources);
   if (reqSize != sizeof(netSendConnectArgs)) return ncclInternalError;
@@ -938,7 +962,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
                                                  resources->tpRemoteRank,
                                                  map->sameProcess ? proxyState->memManager : nullptr, 
                                                  // when sameProcess is true, the buffer can be tracked by the proxyState manager and so can be offloaded. 
-                                                 ncclMemPersist
+                                                 map->sameProcess ? ncclMemOffload : ncclMemPersist
                                                 ));
       } else {
         NCCLCHECK(ncclCudaCalloc(&map->mems[NCCL_NET_MAP_DEVMEM].gpuPtr, map->mems[NCCL_NET_MAP_DEVMEM].size, proxyState->memManager));
@@ -983,17 +1007,13 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
 #if CUDA_VERSION >= 11070
       /* DMA-BUF support */
       int type = NCCL_NET_MAP_DEV_MEM(map, buffs[p]) ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
-      if (type == NCCL_PTR_CUDA && resources->useDmaBuf) {
-        int dmabuf_fd;
-        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, 
-          (CUdeviceptr)resources->buffers[p], resources->buffSizes[p], CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
-          getHandleForAddressRangeFlags(resources->useGdr))
-        );
 
-        NCCLCHECK(proxyState->ncclNet->regMrDmaBuf(
-            resources->netSendComm, resources->buffers[p], resources->buffSizes[p], type, 0ULL, dmabuf_fd, &resources->mhandles[p])
+      if (type == NCCL_PTR_CUDA && resources->useDmaBuf) {
+        struct regMrBuf_args *args = build_args(proxyState->ncclNet, resources->netSendComm, 
+          resources->buffers[p], resources->buffSizes[p], &resources->mhandles[p], resources->useGdr
         );
-        (void)close(dmabuf_fd);
+        NCCLCHECK(regMrBuf(args));
+        ncclBoundMemRegister(proxyState->memManager, resources->buffers[p], args, deregMrBuf, regMrBuf);
       } else // FALL-THROUGH to nv_peermem GDR path
 #endif
       {
@@ -1009,6 +1029,26 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
   //NCCLCHECK(netDumpMap(map));
   if (respSize != sizeof(struct connectMap)) return ncclInternalError;
   memcpy(respBuff, map, sizeof(struct connectMap));
+  return ncclSuccess;
+}
+
+static ncclResult_t regMrBuf(void* args) {
+  regMrBuf_args data  = *((regMrBuf_args*)args);
+  int dmabuf_fd;
+  CUCHECK(cuMemGetHandleForAddressRange(
+      (void *)&dmabuf_fd, (CUdeviceptr)data.data_buf, data.buf_size, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
+      getHandleForAddressRangeFlags(data.useGdr)));
+
+  NCCLCHECK(data.ncclNet->regMrDmaBuf(data.net_comm, data.data_buf, data.buf_size,
+      NCCL_PTR_CUDA, 0ULL, dmabuf_fd, data.mhandles));
+
+  (void)close(dmabuf_fd);
+  return ncclSuccess;
+}
+static ncclResult_t deregMrBuf(void *args_) {
+  regMrBuf_args *data  = (regMrBuf_args*)args_;
+  NCCLCHECK(data->ncclNet->deregMr(data->net_comm, *(data->mhandles)));
+  // data->mhandles = nullptr;
   return ncclSuccess;
 }
 
@@ -1147,10 +1187,12 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
       /* DMA-BUF support */
       int type = NCCL_NET_MAP_DEV_MEM(map, buffs[p]) ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
       if (type == NCCL_PTR_CUDA && resources->useDmaBuf) {
-        int dmabuf_fd;
-        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)resources->buffers[p], resources->buffSizes[p], CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
-        NCCLCHECK(proxyState->ncclNet->regMrDmaBuf(resources->netRecvComm, resources->buffers[p], resources->buffSizes[p], type, 0ULL, dmabuf_fd, &resources->mhandles[p]));
-        (void)close(dmabuf_fd);
+        struct regMrBuf_args *args = build_args(proxyState->ncclNet, resources->netRecvComm, 
+          resources->buffers[p], resources->buffSizes[p], &resources->mhandles[p], resources->useGdr
+        );
+        regMrBuf(args);
+        ncclBoundMemRegister(proxyState->memManager, resources->buffers[p], args, deregMrBuf, regMrBuf);
+        
       } else // FALL-THROUGH to nv_peermem GDR path
 #endif
       {
@@ -1183,9 +1225,14 @@ static ncclResult_t sendProxyFree(struct ncclProxyConnection* connection, struct
       free(memHandle);
     }
 
+    // this can probably be moved into 
     for (int p=0; p<NCCL_NUM_PROTOCOLS; p++) {
       if (resources->buffers[p]) {
-        NCCLCHECK(proxyState->ncclNet->deregMr(resources->netSendComm, resources->mhandles[p]));
+        struct regMrBuf_args *args = build_args(
+          proxyState->ncclNet, resources->netSendComm, 
+          resources->buffers[p], resources->buffSizes[p], &resources->mhandles[p], resources->useGdr
+        );
+        NCCLCHECK(deregMrBuf(args));
       }
     }
     struct connectMapMem* mems = resources->map.mems;
@@ -1236,7 +1283,11 @@ static ncclResult_t recvProxyFree(struct ncclProxyConnection* connection, struct
 
     for (int p=0; p<NCCL_NUM_PROTOCOLS; p++) {
       if (resources->buffers[p]) {
-        NCCLCHECK(proxyState->ncclNet->deregMr(resources->netRecvComm, resources->mhandles[p]));
+        struct regMrBuf_args *args = build_args(
+          proxyState->ncclNet, resources->netRecvComm, 
+          resources->buffers[p], resources->buffSizes[p], &resources->mhandles[p], resources->useGdr
+        );
+        NCCLCHECK(deregMrBuf(args));
       }
     }
     struct connectMapMem* mems = resources->map.mems;
