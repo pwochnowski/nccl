@@ -1,6 +1,6 @@
 #!/bin/bash
 export NCCL_DEBUG=TRACE
-export NCCL_DEBUG_SUBSYS=INIT,ALLOC,P2P
+export NCCL_DEBUG_SUBSYS=INIT,ALLOC
 export NCCL_P2P_DISABLE=1
 export NCCL_SHM_DISABLE=1
 #export NCCL_IB_DISABLE=1
@@ -13,8 +13,32 @@ export NCCL_NET_GDR_LEVEL=SYS
 
 # Stream output: show non-NCCL lines on stdout, save NCCL lines to tempfile for proxy filtering
 NCCL_LOG=$(mktemp)
-mpirun --tag-output -np 2 ./single_out.sh "$@" 2>&1 | \
-  awk -v logfile="$NCCL_LOG" '/NCCL INFO|NCCL WARN|NCCL TRACE/ { print >> logfile; next } { print }'
+if [[ "$*" == *--verbose* ]]; then
+  # Show all output; still save NCCL lines for proxy analysis
+  AWK_FILTER='/NCCL INFO|NCCL WARN|NCCL TRACE/ { print >> logfile } { print }'
+else
+  AWK_FILTER='/NCCL INFO|NCCL WARN|NCCL TRACE/ { print >> logfile; next } { print }'
+fi
+
+if [[ "$*" == *--spinlock* ]]; then
+  FIFO=$(mktemp -u)
+  mkfifo "$FIFO"
+
+  mpirun --tag-output -np 2 ./single_out.sh "$@" >"$FIFO" 2>&1 &
+  MPIRUN_PID=$!
+
+  awk -v logfile="$NCCL_LOG" "$AWK_FILTER" <"$FIFO" &
+
+  read -r -p $'\nPress Enter to release spinlock (sends SIGUSR1)...\n' </dev/tty
+
+  kill -USR1 $(pgrep -u "$(whoami)" ring_pattern_mp) 2>/dev/null
+
+  wait "$MPIRUN_PID"
+  rm -f "$FIFO"
+else
+  mpirun --tag-output -np 2 ./single_out.sh "$@" 2>&1 | \
+    awk -v logfile="$NCCL_LOG" "$AWK_FILTER"
+fi
 
 echo ""
 # Extract TIDs for each proxy thread type
@@ -48,4 +72,3 @@ if [ -n "$ALL_PROXY_TIDS" ]; then
 else
   echo "(no proxy threads found)"
 fi
-rm -f "$NCCL_LOG"
