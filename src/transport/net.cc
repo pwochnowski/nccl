@@ -5,9 +5,14 @@
  * See LICENSE.txt for more license information
  *************************************************************************/
 
+#include "alloc.h"
 #include "comm.h"
 #include "net.h"
 #include "graph.h"
+#include "mem_manager.h"
+#include "nccl.h"
+#include "nccl_common.h"
+#include "nccl_net.h"
 #include "proxy.h"
 #include "collectives.h"
 #include "gdrwrap.h"
@@ -632,7 +637,7 @@ static ncclResult_t recvFree(struct ncclComm* comm, struct ncclConnector* recv) 
 }
 
 #define NCCL_SHARED_STEPS 16
-static ncclResult_t sharedNetBuffersInit(struct ncclProxyState* proxyState, int cuda, int tpLocalRank, int type, int sameProcess,
+static ncclResult_t sharedNetBuffersInit(struct ncclProxyState* proxyState, int cuda, int tpLocalRank, int tpRemoteRank, int type, int sameProcess,
     int nChannels, char** gpuPtr, char** cpuPtr, int* size, ncclIpcDesc *ipcDesc) {
   if (cuda == 0 && sameProcess == 0) {
       WARN("PXN should not use host buffers for data");
@@ -658,7 +663,13 @@ static ncclResult_t sharedNetBuffersInit(struct ncclProxyState* proxyState, int 
   if (cuda && state->cudaBuff == NULL) {
     if (sameProcess == 0 || ncclCuMemEnable()) {
       TRACE(NCCL_ALLOC, "Allocating shared buffer for %s peer %d local rank %d size %u", type == 0 ? "send" : "recv", proxyState->tpRank, tpLocalRank, state->size);
-      NCCLCHECK(ncclP2pAllocateShareableBuffer(state->size, 0, &state->ipcDesc, (void**)&state->cudaBuff));
+      NCCLCHECK(ncclP2pAllocateShareableBuffer(state->size, 0, &state->ipcDesc, (void**)&state->cudaBuff,
+                                                tpRemoteRank,
+                                                 sameProcess ? proxyState->memManager : nullptr,
+                                                 // when sameProcess is true, the buffer can be tracked by the proxyState manager and so can be offloaded.
+                                                 ncclMemPersist
+      )
+      );
     } else {
       NCCLCHECK(ncclCudaCalloc(&state->cudaBuff, state->size, proxyState->memManager));
     }
@@ -710,7 +721,8 @@ static ncclResult_t sharedNetBuffersDestroy(struct ncclProxyState* proxyState, i
 }
 
 static ncclResult_t proxySharedInit(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, int nChannels) {
-  NCCLCHECK(sharedNetBuffersInit(proxyState, 1, connection->tpLocalRank, 0, connection->sameProcess, nChannels, NULL, NULL, NULL, NULL));
+  // todo(paulw): fix remote rank
+  NCCLCHECK(sharedNetBuffersInit(proxyState, 1, connection->tpLocalRank, -1, 0, connection->sameProcess, nChannels, NULL, NULL, NULL, NULL));
   return ncclSuccess;
 }
 
@@ -848,6 +860,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
         ret = proxyState->ncclNet->connect(proxyState->netContext, resources->netDev, req->handle,
             comms->sendComm + resources->channelId, &resources->netDeviceHandle);
       }
+
       resources->netSendComm = comms->sendComm[resources->channelId];
       if (comms->sendComm[resources->channelId]) comms->sendRefCount[resources->channelId]++;
     } else {
@@ -885,16 +898,24 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
 
   if (resources->shared == 0) { // Only allocate dedicated buffers for ring/tree, not for p2p
     for (int p=0; p<NCCL_NUM_PROTOCOLS; p++) {
-      NCCL_NET_MAP_ADD_POINTER(map, 0, p!= NCCL_PROTO_LL && resources->useGdr ? 1 : 0, proxyState->buffSizes[p], buffs[p]);
+
+      NCCL_NET_MAP_ADD_POINTER(map, 
+        resources->shared, p!= NCCL_PROTO_LL && resources->useGdr ? 1 : 0, 
+        proxyState->buffSizes[p], buffs[p]
+      );
+
       resources->buffSizes[p] = proxyState->buffSizes[p];
     }
   } else {
     // Get shared buffers
     int bank = resources->useGdr ? NCCL_NET_MAP_SHARED_DEVMEM : NCCL_NET_MAP_SHARED_HOSTMEM;
     struct connectMapMem* mapMem = map->mems+bank;
-    NCCLCHECK(sharedNetBuffersInit(
-          proxyState, resources->useGdr, resources->tpLocalRank, 0, map->sameProcess, proxyState->p2pnChannels,
+
+    NCCLCHECK(sharedNetBuffersInit(proxyState, resources->useGdr, 
+          resources->tpLocalRank, resources->tpRemoteRank, 
+          0, map->sameProcess, proxyState->p2pnChannels,
           &mapMem->gpuPtr, &mapMem->cpuPtr, &mapMem->size, &mapMem->ipcDesc));
+
     resources->buffSizes[NCCL_PROTO_SIMPLE] = mapMem->size;
 
     if (proxyState->allocP2pNetLLBuffers) {
@@ -913,7 +934,12 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
       if (!map->sameProcess || ncclCuMemEnable()) {
         ALIGN_SIZE(map->mems[NCCL_NET_MAP_DEVMEM].size, CUDA_IPC_MIN);
         NCCLCHECK(ncclP2pAllocateShareableBuffer(map->mems[NCCL_NET_MAP_DEVMEM].size, 0, &map->mems[NCCL_NET_MAP_DEVMEM].ipcDesc,
-                                                 (void**)&map->mems[NCCL_NET_MAP_DEVMEM].gpuPtr));
+                                                 (void**)&map->mems[NCCL_NET_MAP_DEVMEM].gpuPtr,
+                                                 resources->tpRemoteRank,
+                                                 map->sameProcess ? proxyState->memManager : nullptr, 
+                                                 // when sameProcess is true, the buffer can be tracked by the proxyState manager and so can be offloaded. 
+                                                 ncclMemPersist
+                                                ));
       } else {
         NCCLCHECK(ncclCudaCalloc(&map->mems[NCCL_NET_MAP_DEVMEM].gpuPtr, map->mems[NCCL_NET_MAP_DEVMEM].size, proxyState->memManager));
       }
@@ -947,13 +973,13 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
   // Don't give credits yet in shared mode.
   (resources->gdcSync ? *resources->gdcSync : resources->sendMem->head) =
     (map->shared ? -NCCL_STEPS : 0);
-  for (int i=0; i<NCCL_STEPS; i++) resources->recvMem->connFifo[i].size = -1;
 
+  for (int i=0; i<NCCL_STEPS; i++) resources->recvMem->connFifo[i].size = -1;
 
   for (int p=0; p<NCCL_NUM_PROTOCOLS; p++) {
     resources->buffers[p] = NCCL_NET_MAP_GET_POINTER(map, cpu, buffs[p]);
-    if (resources->buffers[p]) {
 
+    if (resources->buffers[p]) {
 #if CUDA_VERSION >= 11070
       /* DMA-BUF support */
       int type = NCCL_NET_MAP_DEV_MEM(map, buffs[p]) ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
@@ -1068,8 +1094,10 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
     int bank = resources->useGdr ? NCCL_NET_MAP_SHARED_DEVMEM : NCCL_NET_MAP_SHARED_HOSTMEM;
     struct connectMapMem* mapMem = map->mems+bank;
     NCCLCHECK(sharedNetBuffersInit(
-          proxyState, resources->useGdr, resources->tpLocalRank, 1, 1, proxyState->p2pnChannels,
-          &mapMem->gpuPtr, &mapMem->cpuPtr, &mapMem->size, NULL));
+          proxyState, resources->useGdr, resources->tpLocalRank,
+          -1, 1, 1, proxyState->p2pnChannels,
+          &mapMem->gpuPtr, &mapMem->cpuPtr, &mapMem->size, NULL
+        ));
     resources->buffSizes[NCCL_PROTO_SIMPLE] = mapMem->size;
     NCCL_NET_MAP_ADD_POINTER(map, 1, resources->useGdr ? 1 : 0, mapMem->size, buffs[NCCL_PROTO_SIMPLE]);
   }
