@@ -73,6 +73,13 @@ typedef struct ncclDynMemImportDesc {
   void*                          ownerPtr;      // Owner's virtual address
 } ncclDynMemImportDesc;
 
+
+typedef struct ncclDynMemBoundDesc {
+  void *args; 
+  ncclResult_t (*reg)(void*);
+  ncclResult_t (*dereg)(void*);
+} ncclDynMemBoundDesc;
+
 // Individual tracked memory entry (only track scratch and offload allocations)
 typedef struct ncclDynMemEntry {
   void*                          ptr;           // GPU virtual address
@@ -92,6 +99,8 @@ typedef struct ncclDynMemEntry {
     ncclDynMemLocalDesc          local;
     ncclDynMemImportDesc         imported;
   } desc;
+
+  ncclDynMemBoundDesc *bound;
 
   // Linked list pointer
   struct ncclDynMemEntry*        next;
@@ -165,8 +174,14 @@ ncclResult_t ncclMemUntrack(struct ncclMemManager* manager, void* ptr, size_t si
 // Add peer info for buffers in the linked list entries (only for dynamic memory: scratch/offload)
 ncclResult_t ncclDynMemMarkExportToPeer(struct ncclMemManager* manager, void* ptr, int peerRank);
 
+// Registers [ptr] with bind and unbind functions corresponding to the subsystem it comes from
+ncclResult_t ncclBoundMemRegister(struct ncclMemManager* manager, void* ptr,
+  void* data, ncclResult_t unbing(void* args), ncclResult_t bing(void* args)
+);
+
 ncclResult_t ncclCommMemSuspend(struct ncclComm* comm);
 ncclResult_t ncclCommMemResume(struct ncclComm* comm);
+
 
 #ifdef __cplusplus
 }

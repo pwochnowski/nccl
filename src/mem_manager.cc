@@ -5,6 +5,7 @@
  * See LICENSE.txt for more license information
  *************************************************************************/
 
+#include "mem_manager.h"
 #include "comm.h"
 #include "alloc.h"
 #include "checks.h"
@@ -12,6 +13,7 @@
 #include "cudawrap.h"
 #include "debug.h"
 #include "bootstrap.h"
+#include "nccl_common.h"
 #include "proxy.h"
 #include "transport.h"
 #include "nvtx.h"
@@ -109,6 +111,11 @@ ncclResult_t ncclMemManagerDestroy(struct ncclComm* comm) {
       free(entry->desc.local.exportedPeerRanks);
     }
 
+    if (entry->bound) {
+      // fingers crossed
+      free(entry->bound->args);
+      free(entry->bound);
+    }
     // Free the entry itself
     free(entry);
     entry = next;
@@ -415,6 +422,54 @@ ncclResult_t ncclDynMemMarkExportToPeer(struct ncclMemManager* manager, void* pt
   return ncclSuccess;
 }
 
+ncclResult_t ncclBoundMemRegister(struct ncclMemManager* manager, void* ptr,
+  void* data, ncclResult_t unbind(void* args), ncclResult_t bind(void* args)
+) {
+  if (ncclParamMemManagerDisable()) return ncclSuccess;
+  if (manager == nullptr || ptr == nullptr) return ncclInternalError;
+  if (!__atomic_load_n(&manager->initialized, __ATOMIC_ACQUIRE)) {
+    WARN("MemManager: Cannot mark export for ptr=%p, manager not initialized",
+         ptr);
+    return ncclInternalError;
+  }
+  std::lock_guard<std::mutex> lock(manager->lock);
+
+  // Find entry in linked list (only contains scratch/offload, not persistent)
+  ncclDynMemEntry *entry = manager->entries;
+  while (entry != nullptr && entry->ptr != ptr) {
+    entry = entry->next;
+  }
+
+  if (entry == nullptr) {
+    WARN("MemManager: Cannot register bound buffer for ptr=%p - not found in "
+         "tracked entries. ",
+         ptr);
+    return ncclInternalError;
+  }
+
+  // Verify this is a local entry, not an imported one
+  if (entry->isImportedFromPeer) {
+    WARN("MemManager: Cannot bind buffer ptr=%p - this is an imported buffer, "
+         "not a local one",
+         ptr);
+    return ncclInternalError;
+  }
+
+  // Check if peer already exists
+  if (entry->bound != nullptr) {
+    WARN("MemManager: Buffer ptr=%p already bound to subsystem", ptr);
+    return ncclInternalError;
+  }
+
+  ncclCalloc(&entry->bound, 1);
+  entry->bound->args = data;
+  entry->bound->reg = bind;
+  entry->bound->dereg = unbind;
+
+  TRACE(NCCL_ALLOC, "MemManager: Bound ptr ptr=%p", ptr);
+  return ncclSuccess;
+}
+
 /*
  * Internal: Suspend all dynamic memory with P2P coordination
  *
@@ -465,6 +520,16 @@ ncclResult_t ncclCommMemSuspend(struct ncclComm* comm) {
       entry->state = ncclDynMemStateReleased;
       releasedPeerImport += entry->size;
       peerImportCount++;
+    }
+    entry = entry->next;
+  }
+
+  // Step 2: Deregister from subsystems
+  entry = manager->entries;
+  while (entry != nullptr) {
+    if (entry->bound) {
+      INFO(NCCL_ALLOC, "Deregister bound ptr %p\n", entry->ptr);
+      entry->bound->dereg(entry->bound->args);
     }
     entry = entry->next;
   }
@@ -934,6 +999,16 @@ ncclResult_t ncclCommMemResume(struct ncclComm* comm) {
       return ret;
     }
   }
+  
+  entry = manager->entries;
+  while (entry != nullptr) {
+    if (entry->bound) {
+      entry->bound->reg(entry->bound->args);
+    }
+    entry = entry->next;
+  }
+
+
 
   // Cleanup
   if (allCounts) free(allCounts);
