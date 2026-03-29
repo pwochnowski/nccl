@@ -10,9 +10,7 @@
 #include "checks.h"
 #include "argcheck.h"
 #include "cudawrap.h"
-#define ENABLE_TRACE
 #include "debug.h"
-#undef ENABLE_TRACE
 #include "bootstrap.h"
 #include "proxy.h"
 #include "transport.h"

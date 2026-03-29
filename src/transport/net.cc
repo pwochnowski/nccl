@@ -657,6 +657,7 @@ static ncclResult_t sharedNetBuffersInit(struct ncclProxyState* proxyState, int 
 
   if (cuda && state->cudaBuff == NULL) {
     if (sameProcess == 0 || ncclCuMemEnable()) {
+      TRACE(NCCL_ALLOC, "Allocating shared buffer for %s peer %d local rank %d size %u", type == 0 ? "send" : "recv", proxyState->tpRank, tpLocalRank, state->size);
       NCCLCHECK(ncclP2pAllocateShareableBuffer(state->size, 0, &state->ipcDesc, (void**)&state->cudaBuff));
     } else {
       NCCLCHECK(ncclCudaCalloc(&state->cudaBuff, state->size, proxyState->memManager));
@@ -948,16 +949,24 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
     (map->shared ? -NCCL_STEPS : 0);
   for (int i=0; i<NCCL_STEPS; i++) resources->recvMem->connFifo[i].size = -1;
 
+
   for (int p=0; p<NCCL_NUM_PROTOCOLS; p++) {
     resources->buffers[p] = NCCL_NET_MAP_GET_POINTER(map, cpu, buffs[p]);
     if (resources->buffers[p]) {
+
 #if CUDA_VERSION >= 11070
       /* DMA-BUF support */
       int type = NCCL_NET_MAP_DEV_MEM(map, buffs[p]) ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
       if (type == NCCL_PTR_CUDA && resources->useDmaBuf) {
         int dmabuf_fd;
-        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)resources->buffers[p], resources->buffSizes[p], CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
-        NCCLCHECK(proxyState->ncclNet->regMrDmaBuf(resources->netSendComm, resources->buffers[p], resources->buffSizes[p], type, 0ULL, dmabuf_fd, &resources->mhandles[p]));
+        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, 
+          (CUdeviceptr)resources->buffers[p], resources->buffSizes[p], CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
+          getHandleForAddressRangeFlags(resources->useGdr))
+        );
+
+        NCCLCHECK(proxyState->ncclNet->regMrDmaBuf(
+            resources->netSendComm, resources->buffers[p], resources->buffSizes[p], type, 0ULL, dmabuf_fd, &resources->mhandles[p])
+        );
         (void)close(dmabuf_fd);
       } else // FALL-THROUGH to nv_peermem GDR path
 #endif

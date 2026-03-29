@@ -225,7 +225,7 @@ static ncclResult_t ncclGdrCudaCalloc(T** ptr, T** devPtr, size_t nelem, void** 
   *ptr = (T *)((char *)gdrMap+off);
   if (devPtr) *devPtr = (T *)(devMem+off+align);
 
-  TRACE(NCCL_INIT, "GDRCOPY : allocated devMem %p gdrMap %p offset %lx mh %lx mapSize %zu at %p",
+  TRACE(NCCL_ALLOC, "GDRCOPY : allocated devMem %p gdrMap %p offset %lx mh %lx mapSize %zu at %p",
        md->gdrDevMem, md->gdrMap, md->gdrOffset, md->gdrMh.h, md->gdrMapSize, *ptr);
 
   return ncclSuccess;

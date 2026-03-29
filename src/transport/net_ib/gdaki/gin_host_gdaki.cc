@@ -90,7 +90,7 @@ static ncclResult_t gdakiRegMrDmaBuf(struct ibv_mr **mr, struct ibv_pd *pd, void
                                      size_t length, int access) {
   int status = 0;
   int dmabuf_fd = -1;
-
+  TRACE(NCCL_ALLOC, "Register mr buf %p size=%lu\n", addr, length);
   if (ncclParamDmaBufEnable() == 0) return ncclInvalidUsage;
 
 #if CUDA_VERSION >= 11070
